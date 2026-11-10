@@ -1,0 +1,13 @@
+{
+  "name": "loadlab",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Next.js load-testing app: fire 500 → 1M requests at any local API and watch live metrics.",
+  "scripts": {
+    "dev": "next dev -p 5050 -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -p 5050 -H 127.0.0.1",
+    "demo-target": "node scripts/demo-target.js"
+  },
+  "dependencies": { "next": "^16.4.5", "react": "^19.3.1", "react-dom": "^19.3.1" }
+}
