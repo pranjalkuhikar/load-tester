@@ -312,10 +312,17 @@ browser. There is no database.
 
 LoadLab can generate a lot of traffic, so it is locked down by default:
 
-- **Localhost targets only.** Requests to any other host are rejected (`localhost`, `127.x.x.x`, `::1`, `0.0.0.0`,
+- **Localhost by default.** Requests to any other host are rejected (`localhost`, `127.x.x.x`, `::1`, `0.0.0.0`,
   `*.localhost`, `host.docker.internal`). A templated host like `http://{{pick:…}}/` cannot bypass the check.
-  To test another machine you own, start with `ALLOW_REMOTE=1 npm run dev`. **Only point it at systems you own or
-  have permission to test.**
+- **External sites need your explicit approval, per domain.** Type the site as the Base URL, tick *"I own this site
+  (or have permission to load-test it)"* and press **Allow this site**. The approval is stored in
+  `data/allowed-hosts.json` (git-ignored) and can be removed any time. `example.com` and `www.example.com` are
+  separate domains and must be approved separately.
+- **Approved external sites have lower limits:** up to **100 users**, **100,000 requests** or **5 minutes** per test,
+  because hosted sites hit quotas and bot protection quickly. TLS certificates are verified for external sites.
+  To lift the caps for systems you fully control, start with `ALLOW_REMOTE=1 npm run dev`.
+- **Only test systems you own or have permission to test.** Load-testing someone else's site can be illegal, and even
+  on your own hosting (Vercel, Netlify, Cloudflare…) heavy automated traffic can use up quotas or get you blocked.
 - **Bound to 127.0.0.1.** Other devices on your network cannot open the dashboard.
 - **The API only answers the dashboard.** Requests whose `Host` isn't a loopback address, or whose `Origin` doesn't
   match, get `403`. This blocks DNS-rebinding and other websites in your browser from controlling the tool.
@@ -433,7 +440,9 @@ On a modern laptop LoadLab can send **well over 100,000 requests per second** to
 
 | Symptom | Likely cause and fix |
 |---|---|
-| **"Blocked: … is not a local address"** | The target isn't localhost. Use a local URL, or `ALLOW_REMOTE=1` for a system you own. |
+| **"… is an external site"** | The target isn't localhost. Under Target, tick the ownership box and press **Allow this site**. |
+| **Test shows 100% `301/302/307`** | The URL redirects (e.g. `example.com` → `www.example.com`). LoadLab doesn't follow redirects; use the final URL. |
+| **`403` / `429` on a hosted site** | A firewall or bot protection is rate-limiting you. Lower the load; don't bypass it. |
 | **Test connection says "Connection refused"** | Your app isn't running, or it's on another port. Check with `lsof -iTCP:3000 -sTCP:LISTEN`. |
 | **Lots of `ECONNRESET` / `EPIPE` in the first seconds** | Hundreds of new connections arriving at once overflowed the OS connection queue. Use **Ramp-up**. On macOS the queue is small by default (`sysctl kern.ipc.somaxconn`). |
 | **`EMFILE` / `EADDRNOTAVAIL`** | The tester ran out of file descriptors / ports. Leave Keep-alive **On**, lower concurrency, or `ulimit -n 65535`. |

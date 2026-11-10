@@ -44,7 +44,14 @@ function Field({ label, hint, children }) {
   return (<label className="field"><span>{label}{hint && <em>{hint}</em>}</span>{children}</label>);
 }
 
-export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, siblings }) {
+const isLoopback = (h) => /^(localhost|127(\.\d+){3}|\[?::1\]?|0\.0\.0\.0|host\.docker\.internal)$/i.test(h) || h.toLowerCase().endsWith(".localhost");
+function hostOf(base) { try { return new URL(base).hostname.toLowerCase(); } catch { return ""; } }
+
+export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, siblings, allowedHosts = [], onAllow, onRemoveHost }) {
+  const host = hostOf(cfg.base);
+  const external = !!host && !isLoopback(host);
+  const approved = external && allowedHosts.includes(host);
+  const [owns, setOwns] = useState(false);
   const [probe, setProbe] = useState(null);
   const [scanDir, setScanDir] = useState("");
   const [scan, setScan] = useState(null);
@@ -94,6 +101,21 @@ export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, sib
           {TARGETS.map((t) => (<button key={t.url} className={"chip" + (cfg.base === t.url ? " on" : "")} onClick={() => set("base", t.url)} disabled={running}>{t.label}</button>))}
           <button className="chip ghost" onClick={doProbe} disabled={running}>⚡ Test connection</button>
         </div>
+        {external && !approved && (
+          <div className="remote warn">
+            <b>🌐 External site: {host}</b>
+            <p>LoadLab only tests <b>localhost</b> by default. Load-testing a site you don’t own can be illegal, and even on your own hosted site (Vercel, Netlify…) heavy traffic can use up quotas or get you rate-limited or blocked.</p>
+            <label className="own"><input type="checkbox" checked={owns} onChange={(e) => setOwns(e.target.checked)} /> I own <b>{host}</b> (or have permission to load-test it)</label>
+            <button className="btn sm primary" disabled={!owns || running} onClick={() => { onAllow(host); setOwns(false); }}>Allow this site</button>
+          </div>
+        )}
+        {approved && (
+          <div className="remote ok">
+            <b>🌐 {host} is approved</b>
+            <p>External limits apply: up to <b>100 users</b>, <b>100,000 requests</b> or <b>5 minutes</b> per test. Results include real network latency.</p>
+            <button className="chip ghost" onClick={() => onRemoveHost(host)} disabled={running}>Remove approval</button>
+          </div>
+        )}
         {probe && (
           <div className={"probe " + (probe.loading ? "" : probe.ok ? "ok" : "bad")}>
             {probe.loading ? "Checking…" : probe.ok ? `✓ ${probe.status} in ${probe.ms.toFixed(0)} ms${probe.server ? " · " + probe.server : ""}` : `✕ ${probe.error}`}

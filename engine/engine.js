@@ -7,7 +7,11 @@ const path = require("node:path");
 const H = require("./hist");
 const { analyze } = require("./analyze");
 
-const LIMITS = { maxTotal: 10_000_000, maxConcurrency: 5000, maxDurationSec: 3600, maxSteps: 12, maxThreads: 16 };
+const LIMITS = {
+  maxTotal: 10_000_000, maxConcurrency: 5000, maxDurationSec: 3600, maxSteps: 12, maxThreads: 16,
+  // stricter caps for approved external sites (hosted sites hit quotas / rate limits quickly)
+  remote: { maxTotal: 100_000, maxConcurrency: 100, maxDurationSec: 300 },
+};
 
 // ---------- config ----------
 function isLoopbackHost(h) {
@@ -15,7 +19,9 @@ function isLoopbackHost(h) {
   return h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "0.0.0.0" || /^127\.\d+\.\d+\.\d+$/.test(h) || h === "host.docker.internal";
 }
 
-function normalize(input) {
+function normalize(input, opts = {}) {
+  const allowed = new Set((opts.allowedHosts || []).map((h) => String(h).toLowerCase()));
+  let remote = false;
   const err = (m) => { const e = new Error(m); e.status = 400; throw e; };
   const num = (v, def, min, max, name) => {
     if (v === undefined || v === null || v === "") return def;
@@ -39,8 +45,14 @@ function normalize(input) {
       // placeholders are replaced with "x" so a templated host can't dodge the local-only check
       let u;
       try { u = new URL(url.replace(/\{\{[^}]*\}\}/g, "x")); } catch { err(`Endpoint ${i + 1}: invalid URL`); }
-      if (!process.env.ALLOW_REMOTE && !isLoopbackHost(u.hostname))
-        err(`Blocked: ${u.hostname} is not a local address. This tool only targets localhost by default (start with ALLOW_REMOTE=1 to override — only for systems you own).`);
+      if (!isLoopbackHost(u.hostname)) {
+        remote = true;
+        if (!process.env.ALLOW_REMOTE && !allowed.has(u.hostname.toLowerCase())) {
+          const e = new Error(`${u.hostname} is an external site. Under "Target", confirm you own it (Allow this site), then start again.`);
+          e.status = 403; e.code = "REMOTE_NOT_ALLOWED"; e.host = u.hostname;
+          throw e;
+        }
+      }
     }
     const headers = {};
     for (const [k, v] of Object.entries(e.headers || {})) if (k && typeof v === "string") headers[k.toLowerCase()] = v;
@@ -74,6 +86,16 @@ function normalize(input) {
     levels = levels.map(Number).filter((n) => Number.isFinite(n) && n >= 1 && n <= LIMITS.maxConcurrency).map(Math.floor).slice(0, LIMITS.maxSteps);
     if (!levels.length) err("Step test needs at least one concurrency level");
     cfg.steps = { levels, secondsPerStep: num(input.steps && input.steps.secondsPerStep, 15, 2, 600, "seconds per step") };
+  }
+  cfg.remote = remote;
+  cfg.insecureTls = !remote; // self-signed certs are fine on localhost; verify real certificates on external sites
+  if (remote && !process.env.ALLOW_REMOTE) {
+    const R = LIMITS.remote;
+    const users = cfg.mode === "steps" ? Math.max(...cfg.steps.levels) : cfg.concurrency;
+    const lim = (m) => err(`External sites are capped at ${m} (set ALLOW_REMOTE=1 when starting LoadLab to lift the caps on systems you own).`);
+    if (users > R.maxConcurrency) lim(`${R.maxConcurrency} concurrent users`);
+    if (cfg.mode === "requests" && cfg.total > R.maxTotal) lim(`${R.maxTotal.toLocaleString("en-US")} requests per test`);
+    if (cfg.mode === "duration" && cfg.durationSec > R.maxDurationSec) lim(`${R.maxDurationSec} seconds per test`);
   }
   return cfg;
 }
@@ -197,7 +219,7 @@ class Run extends EventEmitter {
         const wcfg = {
           id: i, concurrency, total, durationMs: p.durationMs || 0, rampMs: p.rampMs || 0,
           rps: this.cfg.rps ? this.cfg.rps / W : 0, timeoutMs: this.cfg.timeoutMs, thinkMs: this.cfg.thinkMs,
-          keepAlive: this.cfg.keepAlive, endpoints: this.cfg.endpoints,
+          keepAlive: this.cfg.keepAlive, insecureTls: this.cfg.insecureTls, endpoints: this.cfg.endpoints,
         };
         const w = new Worker(path.join(process.cwd(), "engine", "worker.js"), { workerData: wcfg });
         this.workers.add(w);
@@ -310,7 +332,7 @@ class Run extends EventEmitter {
     const samples = {};
     for (const [i, s] of Object.entries(this.samples)) {
       const h = s.headers || {};
-      samples[i] = { status: s.status, ms: s.ms, headers: Object.fromEntries(["x-powered-by", "server", "content-encoding", "content-type", "content-length", "cache-control"].filter((k) => h[k]).map((k) => [k, String(h[k])])) };
+      samples[i] = { status: s.status, ms: s.ms, headers: Object.fromEntries(["x-powered-by", "server", "content-encoding", "content-type", "content-length", "cache-control", "location"].filter((k) => h[k]).map((k) => [k, String(h[k])])) };
     }
     const full = {
       ...snap, cfg: this.cfg, startedAt: this.startedAt, endedAt: this.endedAt, samples,

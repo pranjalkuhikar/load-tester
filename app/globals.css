@@ -128,3 +128,10 @@ textarea { font: 12px ui-monospace, Menlo, monospace; resize: vertical; margin-t
 .verdict .why { display: block; color: #fecaca; margin-top: 6px; font-size: 13px; line-height: 1.5; max-width: 90ch; } .verdict .why strong { color: #fff; }
 .verdict.pass .why, .verdict.limit-found .why { color: #e5e7eb; }
 .errhelp { margin-top: 14px; } .errhelp h4 { margin-bottom: 8px; } .errhelp p { color: #b6c2d8; font-size: 12.5px; margin: 0 0 8px; line-height: 1.5; } .errhelp .pill { margin-right: 6px; }
+
+.remote { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; font-size: 12.5px; background: #0e1630; }
+.remote p { color: #b6c2d8; margin: 6px 0 8px; line-height: 1.5; } .remote b { color: var(--text); }
+.remote.warn { border-color: #854d0e; background: #2b2210; } .remote.warn > b { color: var(--amber); }
+.remote.ok { border-color: #166534; background: #0d2a1d; } .remote.ok > b { color: var(--green); }
+.remote .own { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; cursor: pointer; color: #d4dcee; }
+.remote .own input { margin-top: 3px; }

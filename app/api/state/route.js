@@ -2,7 +2,7 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { guard } from "@/lib/guard";
-import { live, listHistory } from "@/lib/store";
+import { live, listHistory, getAllowedHosts } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +23,7 @@ export async function GET(req) {
     active: live.active ? live.active.id : null,
     history: listHistory(),
     siblings: siblings(),
+    allowedHosts: getAllowedHosts(),
     system: { cpus: os.cpus().length, node: process.version, platform: `${os.platform()} ${os.arch()}`, remoteAllowed: !!process.env.ALLOW_REMOTE },
   });
 }

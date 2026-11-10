@@ -48,16 +48,26 @@ function analyze(r) {
   }
   const cnt = (re) => Object.entries(st).filter(([k]) => re.test(k)).reduce((a, [, v]) => a + v, 0);
   if (st["429"] > 0) add("warn", "Rate limiting kicked in (429)", `${fmt(st["429"])} requests (${pct((st["429"] / t.done) * 100)}) were throttled. Your rate limiter works — but results above that point measure the limiter, not the app.`, "Raise or disable the limiter for load tests (e.g. env flag), or lower the request rate.");
-  if (st["401"] || st["403"]) add("info", "Auth failures (401/403)", `${fmt((st["401"] || 0) + (st["403"] || 0))} requests were rejected for auth. They're fast, so they flatter latency.`, "Add an Authorization header to the endpoint (Headers field) so you test the real code path.");
+  const redirects = Object.entries(st).filter(([k]) => /^3/.test(k)).reduce((a, [, v]) => a + v, 0);
+  if (redirects / t.done > 0.5) {
+    const loc = Object.values(r.samples || {}).map((s) => (s.headers || {}).location).find(Boolean);
+    add("warn", "Most responses are redirects (3xx)", `${pct((redirects / t.done) * 100)} of responses were redirects${loc ? ` to ${loc}` : ""}. LoadLab does not follow redirects, so this test measured the redirect itself, not your real page.`,
+      loc ? `Change the Base URL / path to the final address (${loc}) and run again.` : "Use the final URL (for example the https:// or www. version) and run again.");
+  }
+  if (st["401"] || st["403"]) {
+    const n = (st["401"] || 0) + (st["403"] || 0);
+    if (cfg.remote) add("warn", "Blocked by the host (403/401)", `${fmt(n)} requests (${pct((n / t.done) * 100)}) were refused. On a hosted site this is usually a firewall or bot protection (e.g. Vercel, Cloudflare) rate-limiting automated traffic, not a bug in your code. Those responses are fast and make latency look better than it is.`, "Lower the load or request rate, or allow your own IP in the host's firewall settings while testing. Don't try to bypass the protection.");
+    else add("info", "Auth failures (401/403)", `${fmt(n)} requests were rejected for auth. They're fast, so they flatter latency.`, "Add an Authorization header to the endpoint (Headers field) so you test the real code path.");
+  }
   if (st["404"] / t.done > 0.05) add("info", "Many 404s", `${pct((st["404"] / t.done) * 100)} of responses were 404 — those paths probably don't exist, so you're not testing real work.`, "Check endpoint paths. Tip: use “Scan project” to detect real routes.");
   if (st["400"] / t.done > 0.05 || st["422"] / t.done > 0.05) add("info", "Many 400/422 validation errors", "Request bodies are being rejected, so the handler likely returns before doing real work.", "Fix the body JSON for those endpoints; use {{uuid}}, {{int}}, {{rand:8}} for unique values.");
   void cnt;
 
   // ---- latency shape ----
   // judge the tail per endpoint, so mixing a fast and a slow route isn't mistaken for jitter
-  const liveEps = eps.filter((e) => e.done >= 50 && e.p50 > 0);
+  const liveEps = eps.filter((e) => e.done >= 300 && e.p50 > 0);
   const tailEp = (liveEps.length ? liveEps : [{ name: "all requests", p50: t.p50, p99: t.p99 }]).map((e) => ({ name: e.name, p50: e.p50, p99: e.p99, ratio: e.p99 / e.p50 })).sort((a, b) => b.ratio - a.ratio)[0];
-  if (tailEp.ratio >= 8 && tailEp.p99 > 100) {
+  if (t.done >= 300 && tailEp.ratio >= 8 && tailEp.p99 > 100) {
     add("warn", "Heavy latency tail", `${tailEp.name}: p99 is ${ms(tailEp.p99)} but the median is ${ms(tailEp.p50)} (${tailEp.ratio.toFixed(0)}× gap). Most users are fine; a slice gets a bad experience.`,
       "Suspects: GC pauses, a blocking sync call on the event loop, cold DB connections, lock contention, or periodic jobs. Take a CPU profile during the run and check event-loop lag.");
   }
@@ -84,7 +94,7 @@ function analyze(r) {
 
   // ---- warm-up / Next.js dev mode ----
   const nextish = Object.values(r.samples || {}).some((s) => /next/i.test((s.headers || {})["x-powered-by"] || ""));
-  if (nextish && t.p50 > 25) {
+  if (nextish && t.p50 > 25 && !cfg.remote) {
     add("info", "Next.js detected — benchmark the production build", "Latency of a Next.js app in `next dev` is dominated by on-demand compilation and no caching; numbers are 3-10× worse than production.",
       "Run `next build && next start` (and set NODE_ENV=production), then re-test. Also cache with `revalidate`/`unstable_cache` for read-heavy routes.");
   }
@@ -110,6 +120,12 @@ function analyze(r) {
   const gz = Object.values(r.samples || {}).some((s) => (s.headers || {})["content-encoding"]);
   if (respBytes > 100_000) add("warn", "Large responses", `Average response is ${(respBytes / 1024).toFixed(0)} KB. At ${fmt(t.avgRps)} req/s that is ${((respBytes * t.avgRps) / 1e6).toFixed(0)} MB/s through the server.`, "Paginate, select fewer fields, enable gzip/brotli, and cache. Big JSON also costs CPU to serialize.");
   else if (!gz && respBytes > 4000) add("info", "Responses aren't compressed", `Average payload ${(respBytes / 1024).toFixed(1)} KB with no content-encoding.`, "Enable compression (Nginx gzip/brotli, or `compression` middleware) for text/JSON.");
+
+  // ---- external site caveats ----
+  if (cfg.remote) {
+    add("info", "You tested an external site", "Latency includes the real network round trip from your machine, and your own internet connection or Wi-Fi can cap throughput. Hosted sites are usually behind a CDN, so many responses may come from cache rather than your code, and platforms may rate-limit or block heavy automated traffic.",
+      "Compare with a local run to separate network time from server time. Test uncached routes (API calls) to measure your real backend, and keep load modest so you don't hit hosting quotas.");
+  }
 
   // ---- load generator health ----
   if (r.gen && r.gen.elP99Max > 40) {

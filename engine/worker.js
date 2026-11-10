@@ -58,7 +58,7 @@ function render(s) {
 const agentOpts = { keepAlive: cfg.keepAlive, maxSockets: cfg.concurrency + 8, maxFreeSockets: cfg.concurrency + 8, timeout: 0 };
 const agents = {
   "http:": new http.Agent(agentOpts),
-  "https:": new https.Agent({ ...agentOpts, rejectUnauthorized: false }),
+  "https:": new https.Agent({ ...agentOpts, rejectUnauthorized: !cfg.insecureTls }),
 };
 
 // ---------- stats (delta since last flush) ----------

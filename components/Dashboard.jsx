@@ -33,6 +33,7 @@ export default function Dashboard() {
   const [runId, setRunId] = useState(null);
   const [history, setHistory] = useState([]);
   const [siblings, setSiblings] = useState([]);
+  const [allowedHosts, setAllowedHosts] = useState([]);
   const [sys, setSys] = useState(null);
   const [error, setError] = useState(null);
   const es = useRef(null);
@@ -43,7 +44,7 @@ export default function Dashboard() {
   const refresh = useCallback(async () => {
     try {
       const s = await api("/api/state");
-      setHistory(s.history); setSiblings(s.siblings || []); setSys(s.system);
+      setHistory(s.history); setSiblings(s.siblings || []); setAllowedHosts(s.allowedHosts || []); setSys(s.system);
       return s;
     } catch (e) { setError(e.message); }
   }, []);
@@ -83,6 +84,16 @@ export default function Dashboard() {
       setTimeout(() => resultsRef.current?.scrollTo({ top: 0, behavior: "smooth" }), 100);
     } catch (e) { setError(e.message); }
   }
+  // external sites must be explicitly approved (the server enforces this too)
+  async function allowHost(host) {
+    try {
+      const r = await api("/api/hosts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host, confirm: true }) });
+      setAllowedHosts(r.hosts); setError(null);
+    } catch (e) { setError(e.message); }
+  }
+  async function removeHost(host) {
+    try { const r = await api("/api/hosts?host=" + encodeURIComponent(host), { method: "DELETE" }); setAllowedHosts(r.hosts); } catch (e) { setError(e.message); }
+  }
   async function stop() { try { await api(`/api/runs/${runId}/stop`, { method: "POST" }); } catch (e) { setError(e.message); } }
   async function openRun(id) {
     try {
@@ -110,7 +121,7 @@ export default function Dashboard() {
       {error && <div className="banner" onClick={() => setError(null)}>⚠ {error} <span>dismiss</span></div>}
 
       <main className="layout">
-        <ConfigPanel cfg={cfg} setCfg={setCfg} running={running} onStart={start} onStop={stop} siblings={siblings} />
+        <ConfigPanel cfg={cfg} setCfg={setCfg} running={running} onStart={start} onStop={stop} siblings={siblings} allowedHosts={allowedHosts} onAllow={allowHost} onRemoveHost={removeHost} />
         <div className="right" ref={resultsRef}>
           {view ? (
             <Results v={view} cfg={runCfg} />
