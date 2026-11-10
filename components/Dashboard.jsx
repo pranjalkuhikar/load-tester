@@ -4,7 +4,7 @@ import ConfigPanel, { DEFAULT_CFG, toPayload } from "./ConfigPanel";
 import Results from "./Results";
 import History from "./History";
 
-const KEY = "loadlab.cfg.v1";
+const KEY = "loadlab.cfg.v2";
 const api = async (url, opts) => {
   const r = await fetch(url, opts);
   const j = await r.json().catch(() => ({}));
@@ -34,11 +34,14 @@ export default function Dashboard() {
   const [history, setHistory] = useState([]);
   const [siblings, setSiblings] = useState([]);
   const [allowedHosts, setAllowedHosts] = useState([]);
+  const [discovered, setDiscovered] = useState([]);
+  const [scanning, setScanning] = useState(false);
   const [sys, setSys] = useState(null);
   const [error, setError] = useState(null);
   const es = useRef(null);
   const resultsRef = useRef(null);
 
+  const recent = [...new Set(history.map((h) => h.base))];
   const running = !!view && (view.state === "running" || view.state === "stopping");
 
   const refresh = useCallback(async () => {
@@ -47,6 +50,13 @@ export default function Dashboard() {
       setHistory(s.history); setSiblings(s.siblings || []); setAllowedHosts(s.allowedHosts || []); setSys(s.system);
       return s;
     } catch (e) { setError(e.message); }
+  }, []);
+
+  // look for HTTP servers running on this machine (common dev ports)
+  const rescan = useCallback(async () => {
+    setScanning(true);
+    try { setDiscovered((await api("/api/discover")).servers || []); } catch { setDiscovered([]); }
+    setScanning(false);
   }, []);
 
   const attach = useCallback((id) => {
@@ -68,6 +78,7 @@ export default function Dashboard() {
   useEffect(() => {
     try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s) setCfg({ ...DEFAULT_CFG, ...s }); } catch {}
     setReady(true);
+    rescan();
     const want = new URLSearchParams(window.location.search).get("run"); // deep link: /?run=<id>
     refresh().then((s) => { if (s?.active) attach(s.active); else if (want) openRun(want); else if (s?.history?.[0]) openRun(s.history[0].id); });
     return () => es.current?.close();
@@ -121,20 +132,27 @@ export default function Dashboard() {
       {error && <div className="banner" onClick={() => setError(null)}>⚠ {error} <span>dismiss</span></div>}
 
       <main className="layout">
-        <ConfigPanel cfg={cfg} setCfg={setCfg} running={running} onStart={start} onStop={stop} siblings={siblings} allowedHosts={allowedHosts} onAllow={allowHost} onRemoveHost={removeHost} />
+        <ConfigPanel cfg={cfg} setCfg={setCfg} running={running} onStart={start} onStop={stop} siblings={siblings} allowedHosts={allowedHosts} onAllow={allowHost} onRemoveHost={removeHost} discovered={discovered} scanning={scanning} onRescan={rescan} recent={recent} />
         <div className="right" ref={resultsRef}>
           {view ? (
             <Results v={view} cfg={runCfg} />
           ) : (
             <div className="hero card">
-              <h2>Ready when you are</h2>
-              <p>Pick a target on the left, choose how many requests to send (500 → 1 million), and press <b>Start test</b>. You’ll see live throughput, latency percentiles, errors per endpoint — and at the end, a verdict with concrete suggestions.</p>
+              <span className="eyebrow">Load testing, made simple</span>
+              <h2>Know how much traffic your API can take, before your users find out.</h2>
+              <p>Send anywhere from 500 to 1,000,000 requests to an app running on your machine and watch it live: requests per second, how long users wait, what fails and why.</p>
+              <div className="tiles">
+                <div><b>📡 Live metrics</b><span>Throughput, p50 / p95 / p99 latency and errors, updated twice a second.</span></div>
+                <div><b>🎯 Find the limit</b><span>A step test raises users level by level and shows exactly where your app breaks.</span></div>
+                <div><b>🧠 Clear verdicts</b><span>Pass or fail against your goals, with the reason and how to fix it.</span></div>
+                <div><b>🔍 Zero setup</b><span>Detects running servers and the routes in your project automatically.</span></div>
+              </div>
+              <h4>Get started</h4>
               <ol>
-                <li><b>Start your app</b> (Next.js on :3000, Node on :4000, …).</li>
-                <li><b>Auto-detect endpoints</b> from the project folder, or type them in.</li>
-                <li>Try <b>Fixed requests</b> for a quick check, or <b>Step test</b> to find the breaking point.</li>
+                <li><b>Pick a target</b> from “Running on this machine”, or type a URL.</li>
+                <li><b>Choose endpoints</b>. Auto-detect them from your project folder, or add your own.</li>
+                <li><b>Pick a scenario</b>, such as Smoke test or Find the limit, and press <b>Start test</b>.</li>
               </ol>
-              <p className="muted">Tip: no app handy? Run <code>npm run demo-target</code> and use “Demo :4100” with paths <code>/fast</code>, <code>/slow</code>, <code>/flaky</code>.</p>
             </div>
           )}
           <History items={history} current={runId} onOpen={openRun} onDelete={del} onReuse={reuse} />

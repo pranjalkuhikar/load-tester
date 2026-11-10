@@ -1,7 +1,8 @@
 "use client";
 import { useMemo } from "react";
 import { LineChart, Legend, Histogram } from "./Charts";
-import { num, ms, pct, bytes, dur } from "./format";
+import { useState } from "react";
+import { num, ms, pct, bytes, dur, buildReport } from "./format";
 
 const SC = { p50: "#60a5fa", p95: "#fbbf24", p99: "#f472b6", rps: "#5eead4", err: "#f87171" };
 const statusColor = (k) => (k === "ERR" ? "#f87171" : k[0] === "2" ? "#4ade80" : k[0] === "3" ? "#60a5fa" : k[0] === "4" ? "#fbbf24" : "#f87171");
@@ -47,8 +48,31 @@ export default function Results({ v, cfg }) {
   const stepLat = useMemo(() => [{ key: "p50", label: "p50", color: SC.p50, data: ph.map((p) => p.p50) }, { key: "p95", label: "p95", color: SC.p95, data: ph.map((p) => p.p95) }], [ph]);
 
   const vs = an?.verdict;
+  const [copied, setCopied] = useState(false);
+  const finished = !running && (v.state === "done" || v.state === "stopped");
+  function exportJson() {
+    const blob = new Blob([JSON.stringify({ ...v, cfg }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `loadlab-${v.id || "run"}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  async function copyReport() {
+    const text = buildReport(v, cfg);
+    try { await navigator.clipboard.writeText(text); } catch {
+      const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+    }
+    setCopied(true); setTimeout(() => setCopied(false), 1800);
+  }
   return (
     <div className="results">
+      {finished && (
+        <div className="toolbar">
+          <span>{cfg?.name || cfg?.base}</span>
+          <div><button className="btn sm" onClick={copyReport}>{copied ? "✓ Copied" : "📋 Copy report"}</button><button className="btn sm" onClick={exportJson}>⬇ Export JSON</button></div>
+        </div>
+      )}
       {vs && (
         <div className={"verdict " + vs.status.replace(/\s/g, "-").toLowerCase()}>
           <div className="vbadge">{vs.status}</div>

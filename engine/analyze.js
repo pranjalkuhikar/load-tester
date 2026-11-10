@@ -158,7 +158,9 @@ function analyze(r) {
   let status = sloP95 && sloErr ? "PASS" : "FAIL";
   if (cfg.mode === "steps" && capacity) status = capacity.sustainable ? (capacity.breaksAt ? "LIMIT FOUND" : "PASS") : "FAIL";
   let headline;
-  if (cfg.mode === "steps" && capacity) headline = capacity.sustainable ? `Handles ~${fmt(capacity.sustainable.rps)} req/s within SLO` + (capacity.breaksAt ? `; breaks near ${capacity.breaksAt} users` : "; no breaking point reached — raise the levels") : "Did not meet SLO at any level";
+  const flatFromStart = cfg.mode === "steps" && capacity && !capacity.breaksAt && r.phases.length > 2 && r.phases[0].rps >= capacity.peak.rps * 0.85;
+  if (flatFromStart) headline = `Within SLO up to ${Math.max(0, ...r.phases.filter((p) => p.done > 0 && p.p95 <= slo.p95Ms && p.errorPct <= slo.errorPct).map((p) => p.concurrency))} users, but throughput maxes out at ~${fmt(capacity.peak.rps)} req/s from the first level`;
+  else if (cfg.mode === "steps" && capacity) headline = capacity.sustainable ? `Handles ~${fmt(capacity.sustainable.rps)} req/s within SLO` + (capacity.breaksAt ? `; breaks near ${capacity.breaksAt} users` : "; no breaking point reached — raise the levels") : "Did not meet SLO at any level";
   else if (status === "PASS") headline = `${fmt(t.avgRps)} req/s, p95 ${ms(t.p95)}, ${pct(t.errorPct)} errors`;
   else headline = [!sloP95 && `p95 ${ms(t.p95)} > ${slo.p95Ms} ms`, !sloErr && `errors ${pct(t.errorPct)} > ${slo.errorPct}%`].filter(Boolean).join(" · ");
 
@@ -196,6 +198,7 @@ function analyze(r) {
     }
   }
 
+  if (flatFromStart) add("info", "Throughput is capped, not the latency", `Requests/sec was already near its maximum (~${fmt(capacity.peak.rps)}) at ${r.phases[0].concurrency} users and never grew with more users, while latency rose. That means one resource (usually a single CPU core running Node) is the ceiling, and more users only wait longer. Latency stayed within your goals, so this is a capacity limit, not a failure.`, "To raise the ceiling: run several instances (PM2 cluster / multiple containers behind Nginx), cache hot responses, or reduce work per request.");
   if (!out.some((i) => i.level === "critical" || i.level === "warn")) {
     add("good", "Healthy under this load", `No errors beyond budget and latency is stable (p95 ${ms(t.p95)}).`,
       cfg.mode === "steps" ? "Increase the step levels to find the ceiling." : "Run a Step test (10 → 400 users) to find where it actually breaks, or try 5–10× the volume.");

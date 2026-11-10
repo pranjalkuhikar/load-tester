@@ -4,8 +4,8 @@ import { short } from "./format";
 
 export const DEFAULT_CFG = {
   name: "",
-  base: "http://localhost:3000",
-  endpoints: [{ id: 1, method: "GET", path: "/api/health", weight: 1, headers: "", body: "", open: false }],
+  base: "",
+  endpoints: [{ id: 1, method: "GET", path: "/", weight: 1, headers: "", body: "", open: false }],
   mode: "requests",
   total: 1000,
   durationSec: 30,
@@ -21,13 +21,20 @@ export const DEFAULT_CFG = {
   sloErr: 1,
 };
 
-const TARGETS = [
-  { label: "Next.js :3000", url: "http://localhost:3000" },
-  { label: "Node :4000", url: "http://localhost:4000" },
-  { label: "Demo :4100", url: "http://localhost:4100" },
+// One-click starting points. They only set the load shape; target and endpoints stay as they are.
+const SCENARIOS = [
+  { id: "smoke", icon: "🧪", name: "Smoke test", desc: "500 requests, 10 users. Is it alive?", set: { mode: "requests", total: 500, concurrency: 10, rampSec: 0, rps: 0 } },
+  { id: "load", icon: "📈", name: "Load test", desc: "10,000 requests, 50 users", set: { mode: "requests", total: 10000, concurrency: 50, rampSec: 0, rps: 0 } },
+  { id: "stress", icon: "🔥", name: "Stress test", desc: "100,000 requests, 200 users", set: { mode: "requests", total: 100000, concurrency: 200, rampSec: 3, rps: 0 } },
+  { id: "soak", icon: "⏱️", name: "Soak test", desc: "5 minutes, 25 users. Finds leaks.", set: { mode: "duration", durationSec: 300, concurrency: 25, rampSec: 5, rps: 0 } },
+  { id: "limit", icon: "🎯", name: "Find the limit", desc: "Step test, 10 → 400 users", set: { mode: "steps", stepLevels: "10, 25, 50, 100, 200, 400", stepSeconds: 15, rps: 0 } },
 ];
+const isActive = (cfg, s) => Object.entries(s.set).every(([k, v]) => String(cfg[k]) === String(v));
+
 const COUNTS = [500, 1000, 10000, 100000, 1000000];
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+const isLoopback = (h) => /^(localhost|127(\.\d+){3}|\[?::1\]?|0\.0\.0\.0|host\.docker\.internal)$/i.test(h) || h.toLowerCase().endsWith(".localhost");
+function hostOf(base) { try { return new URL(base).hostname.toLowerCase(); } catch { return ""; } }
 
 export function toPayload(c) {
   const parseHeaders = (t) => Object.fromEntries(String(t || "").split("\n").map((l) => l.split(/:(.*)/s)).filter((p) => p[0]?.trim() && p[1] !== undefined).map((p) => [p[0].trim(), p[1].trim()]));
@@ -44,28 +51,27 @@ function Field({ label, hint, children }) {
   return (<label className="field"><span>{label}{hint && <em>{hint}</em>}</span>{children}</label>);
 }
 
-const isLoopback = (h) => /^(localhost|127(\.\d+){3}|\[?::1\]?|0\.0\.0\.0|host\.docker\.internal)$/i.test(h) || h.toLowerCase().endsWith(".localhost");
-function hostOf(base) { try { return new URL(base).hostname.toLowerCase(); } catch { return ""; } }
-
-export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, siblings, allowedHosts = [], onAllow, onRemoveHost }) {
-  const host = hostOf(cfg.base);
-  const external = !!host && !isLoopback(host);
-  const approved = external && allowedHosts.includes(host);
-  const [owns, setOwns] = useState(false);
+export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, siblings, allowedHosts = [], onAllow, onRemoveHost, discovered = [], scanning, onRescan, recent = [] }) {
   const [probe, setProbe] = useState(null);
   const [scanDir, setScanDir] = useState("");
   const [scan, setScan] = useState(null);
   const [picked, setPicked] = useState({});
+  const [owns, setOwns] = useState(false);
+  const host = hostOf(cfg.base);
+  const external = !!host && !isLoopback(host);
+  const approved = external && allowedHosts.includes(host);
   const set = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
   const setEp = (id, k, v) => setCfg((c) => ({ ...c, endpoints: c.endpoints.map((e) => (e.id === id ? { ...e, [k]: v } : e)) }));
   const nextId = () => Math.max(0, ...cfg.endpoints.map((e) => e.id)) + 1;
+  const normBase = cfg.base.replace(/\/$/, "");
 
   async function doProbe() {
+    if (!cfg.base.trim()) { setProbe({ ok: false, error: "Enter a Base URL first" }); return; }
     setProbe({ loading: true });
     const first = cfg.endpoints[0]?.path || "/";
-    const url = /^https?:/.test(first) ? first : cfg.base.replace(/\/$/, "") + (first.startsWith("/") ? first : "/" + first);
+    const url = /^https?:/.test(first) ? first : normBase + (first.startsWith("/") ? first : "/" + first);
     try { setProbe(await (await fetch("/api/probe?url=" + encodeURIComponent(url.replace(/\{\{[^}]*\}\}/g, "1")))).json()); }
-    catch { setProbe({ ok: false, error: "Could not reach LoadLab server" }); }
+    catch { setProbe({ ok: false, error: "Could not reach the LoadLab server" }); }
   }
   async function doScan(dir) {
     const d = dir ?? scanDir;
@@ -82,13 +88,16 @@ export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, sib
     const defaults = { POST: '{"title":"load test {{uuid}}","completed":false}', PUT: '{"title":"updated {{rand:6}}"}', PATCH: '{"completed":true}' };
     setCfg((c) => {
       let id = Math.max(0, ...c.endpoints.map((e) => e.id));
-      const keep = c.endpoints.filter((e) => !(e.path === "/api/health" && e.weight === 1 && c.endpoints.length === 1));
+      const untouched = c.endpoints.length === 1 && c.endpoints[0].path === "/" && !c.endpoints[0].body;
+      const keep = untouched ? [] : c.endpoints;
       return { ...c, endpoints: [...keep, ...chosen.map((r) => ({ id: ++id, method: r.method, path: r.path, weight: r.method === "GET" ? 3 : 1, headers: "", body: defaults[r.method] || "", open: !!defaults[r.method] }))] };
     });
     setScan(null);
   }
 
   const totalW = cfg.endpoints.reduce((a, e) => a + (+e.weight || 0), 0) || 1;
+  const recentShown = recent.filter((u) => !discovered.some((d) => d.url === u)).slice(0, 4);
+  const ready = cfg.base.trim().length > 0;
 
   return (
     <aside className="config">
@@ -97,10 +106,27 @@ export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, sib
         <Field label="Base URL">
           <input value={cfg.base} onChange={(e) => set("base", e.target.value)} placeholder="http://localhost:3000" spellCheck={false} disabled={running} />
         </Field>
-        <div className="chips">
-          {TARGETS.map((t) => (<button key={t.url} className={"chip" + (cfg.base === t.url ? " on" : "")} onClick={() => set("base", t.url)} disabled={running}>{t.label}</button>))}
-          <button className="chip ghost" onClick={doProbe} disabled={running}>⚡ Test connection</button>
+
+        <div className="subhead">
+          <span>Running on this machine</span>
+          <button className="link" onClick={onRescan} disabled={running || scanning}>{scanning ? "Scanning…" : "↻ Rescan"}</button>
         </div>
+        <div className="chips">
+          {discovered.map((d) => (
+            <button key={d.url} className={"chip live" + (normBase === d.url ? " on" : "")} onClick={() => set("base", d.url)} disabled={running} title={`${d.url} (HTTP ${d.status})`}>
+              <i className="dot" />{d.name} <em>:{d.port}</em>
+            </button>
+          ))}
+          {!discovered.length && <span className="muted">{scanning ? "Looking for local servers…" : "No local servers found. Start your app, then rescan, or type a URL above."}</span>}
+        </div>
+
+        {recentShown.length > 0 && (
+          <>
+            <div className="subhead"><span>Recent</span></div>
+            <div className="chips">{recentShown.map((u) => (<button key={u} className={"chip" + (normBase === u ? " on" : "")} onClick={() => set("base", u)} disabled={running}>🕘 {u.replace(/^https?:\/\//, "")}</button>))}</div>
+          </>
+        )}
+
         {external && !approved && (
           <div className="remote warn">
             <b>🌐 External site: {host}</b>
@@ -116,6 +142,8 @@ export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, sib
             <button className="chip ghost" onClick={() => onRemoveHost(host)} disabled={running}>Remove approval</button>
           </div>
         )}
+
+        <div className="chips"><button className="chip ghost" onClick={doProbe} disabled={running}>⚡ Test connection</button></div>
         {probe && (
           <div className={"probe " + (probe.loading ? "" : probe.ok ? "ok" : "bad")}>
             {probe.loading ? "Checking…" : probe.ok ? `✓ ${probe.status} in ${probe.ms.toFixed(0)} ms${probe.server ? " · " + probe.server : ""}` : `✕ ${probe.error}`}
@@ -173,7 +201,16 @@ export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, sib
       </section>
 
       <section className="card">
-        <h3><span className="n">3</span> Test type</h3>
+        <h3><span className="n">3</span> Test</h3>
+        <div className="scen">
+          {SCENARIOS.map((s) => (
+            <button key={s.id} className={"scn" + (isActive(cfg, s) ? " on" : "")} onClick={() => setCfg((c) => ({ ...c, ...s.set }))} disabled={running}>
+              <span className="ic">{s.icon}</span><b>{s.name}</b><em>{s.desc}</em>
+            </button>
+          ))}
+        </div>
+
+        <div className="subhead"><span>Customize</span></div>
         <div className="tabs">
           {[["requests", "Fixed requests"], ["duration", "Duration"], ["steps", "Step test"]].map(([k, l]) => (
             <button key={k} className={cfg.mode === k ? "on" : ""} onClick={() => set("mode", k)} disabled={running}>{l}</button>
@@ -200,24 +237,30 @@ export default function ConfigPanel({ cfg, setCfg, running, onStart, onStop, sib
       </section>
 
       <section className="card">
-        <h3><span className="n">4</span> Load & limits</h3>
+        <h3><span className="n">4</span> Load & goals</h3>
         <div className="grid2">
           {cfg.mode !== "steps" && <Field label="Concurrency" hint="parallel users"><input type="number" min="1" max="5000" value={cfg.concurrency} onChange={(e) => set("concurrency", e.target.value)} disabled={running} /></Field>}
-          <Field label="Rate limit" hint="req/s, 0 = max"><input type="number" min="0" value={cfg.rps} onChange={(e) => set("rps", e.target.value)} disabled={running} /></Field>
           <Field label="Ramp-up" hint={cfg.mode === "steps" ? "s per step, 0 = auto" : "seconds"}><input type="number" min="0" value={cfg.rampSec} onChange={(e) => set("rampSec", e.target.value)} disabled={running} /></Field>
-          <Field label="Timeout" hint="ms"><input type="number" min="100" value={cfg.timeoutMs} onChange={(e) => set("timeoutMs", e.target.value)} disabled={running} /></Field>
-          <Field label="Threads" hint="0 = auto"><input type="number" min="0" max="16" value={cfg.threads} onChange={(e) => set("threads", e.target.value)} disabled={running} /></Field>
-          <Field label="Keep-alive"><select value={cfg.keepAlive ? "1" : "0"} onChange={(e) => set("keepAlive", e.target.value === "1")} disabled={running}><option value="1">On (reuse connections)</option><option value="0">Off (new TCP each time)</option></select></Field>
+          <Field label="Rate limit" hint="req/s, 0 = max"><input type="number" min="0" value={cfg.rps} onChange={(e) => set("rps", e.target.value)} disabled={running} /></Field>
         </div>
+        <div className="subhead"><span>Pass / fail goals (SLO)</span></div>
         <div className="grid2">
-          <Field label="SLO: p95 under" hint="ms"><input type="number" min="1" value={cfg.sloP95} onChange={(e) => set("sloP95", e.target.value)} disabled={running} /></Field>
-          <Field label="SLO: errors under" hint="%"><input type="number" min="0" step="0.1" value={cfg.sloErr} onChange={(e) => set("sloErr", e.target.value)} disabled={running} /></Field>
+          <Field label="p95 latency under" hint="ms"><input type="number" min="1" value={cfg.sloP95} onChange={(e) => set("sloP95", e.target.value)} disabled={running} /></Field>
+          <Field label="Errors under" hint="%"><input type="number" min="0" step="0.1" value={cfg.sloErr} onChange={(e) => set("sloErr", e.target.value)} disabled={running} /></Field>
         </div>
+        <details className="adv">
+          <summary>Advanced</summary>
+          <div className="grid2">
+            <Field label="Timeout" hint="ms"><input type="number" min="100" value={cfg.timeoutMs} onChange={(e) => set("timeoutMs", e.target.value)} disabled={running} /></Field>
+            <Field label="Threads" hint="0 = auto"><input type="number" min="0" max="16" value={cfg.threads} onChange={(e) => set("threads", e.target.value)} disabled={running} /></Field>
+          </div>
+          <Field label="Keep-alive"><select value={cfg.keepAlive ? "1" : "0"} onChange={(e) => set("keepAlive", e.target.value === "1")} disabled={running}><option value="1">On: reuse connections (like a browser)</option><option value="0">Off: new TCP connection per request</option></select></Field>
+        </details>
       </section>
 
       <div className="startbar">
         <input className="name" value={cfg.name} onChange={(e) => set("name", e.target.value)} placeholder="Name this run (optional)" disabled={running} />
-        {running ? (<button className="btn stop" onClick={onStop}>■ Stop test</button>) : (<button className="btn go" onClick={onStart}>▶ Start test</button>)}
+        {running ? (<button className="btn stop" onClick={onStop}>■ Stop test</button>) : (<button className="btn go" onClick={onStart} disabled={!ready} title={ready ? "" : "Enter a Base URL first"}>▶ Start test</button>)}
       </div>
     </aside>
   );

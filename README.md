@@ -91,7 +91,8 @@ npm run demo-target      # starts a practice API on http://localhost:4100
 | `/flaky` | fails with HTTP 500 about 10% of the time |
 | `/echo` (POST) | returns the size of the body you sent |
 
-In LoadLab click the **Demo :4100** chip and add a few of these paths. It is a safe way to learn what the results look like.
+LoadLab detects it automatically under **Running on this machine**. Add a few of these paths and run a scenario. It is
+a safe way to learn what the results look like.
 
 ---
 
@@ -100,19 +101,34 @@ In LoadLab click the **Demo :4100** chip and add a few of these paths. It is a s
 1. **Start the app you want to test.** For the most realistic numbers use its *production* mode
    (for Next.js: `next build && next start`, not `next dev`).
 2. **Open LoadLab** at http://localhost:5050.
-3. **Target.** Type the base URL (for example `http://localhost:3000`) or click a preset chip, then press
-   **⚡ Test connection**. A green ✓ means LoadLab can reach your app.
+3. **Target.** LoadLab scans your machine for running servers and lists them under **Running on this machine**
+   (framework name and port). Click one, or type any base URL such as `http://localhost:3000`. Recent targets are
+   listed too. Press **⚡ Test connection**; a green ✓ means LoadLab can reach your app.
 4. **Endpoints.** Choose what to hit:
    - type a path such as `/api/todos` and pick a method (GET, POST…), or
    - open **🔍 Auto-detect from a project folder**, pick your project, and tick the routes you want
      (see [Auto-detect endpoints](#auto-detect-endpoints)).
-5. **Test type.** Start with **Fixed requests → 1k**.
+5. **Test.** Pick a **scenario** (see below). **Smoke test** is a good first run.
 6. Press **▶ Start test**. Numbers and charts update live every half second.
 7. Read the **verdict banner** at the top and the **Analysis & suggestions** card at the bottom.
+8. Use **📋 Copy report** (Markdown, ready to paste into a PR or ticket) or **⬇ Export JSON** to share the result.
 
 When that works, try a **Step test** (see below). It tells you how much your app can really take.
 
 ---
+
+## Scenarios (one-click starting points)
+
+| Scenario | Load shape | Use it for |
+|---|---|---|
+| 🧪 **Smoke test** | 500 requests, 10 users | "Is it alive and answering correctly?" |
+| 📈 **Load test** | 10,000 requests, 50 users | Normal expected traffic |
+| 🔥 **Stress test** | 100,000 requests, 200 users | Heavy traffic (ramps up over 3 s) |
+| ⏱️ **Soak test** | 5 minutes, 25 users | Memory leaks and slow degradation |
+| 🎯 **Find the limit** | Step test, 10 → 400 users | Where your app starts to struggle |
+
+A scenario only sets the load shape; your target and endpoints stay as they are. You can fine-tune any value
+afterwards under **Customize**.
 
 ## The three test types
 
@@ -163,6 +179,8 @@ operating system's connection queue and cause errors that say nothing about your
 | Field | Meaning |
 |---|---|
 | **Base URL** | Where your app runs, e.g. `http://localhost:3000`. Endpoint paths are added to it. |
+| **Running on this machine** | HTTP servers found on common dev ports (3000, 4000, 5173, 8000, 8080…), identified by their response headers. **↻ Rescan** refreshes the list. |
+| **Recent** | Targets from your previous runs. |
 | **Test connection** | Sends one request to the first endpoint to check it is reachable. |
 
 ### 2. Endpoints
@@ -177,17 +195,22 @@ Each row is one request type.
 ### 3. Test type
 See [The three test types](#the-three-test-types). Step test adds **Concurrent users per step** (comma separated) and **Seconds per step**.
 
-### 4. Load & limits
+### 4. Load & goals
 | Field | Meaning | Example |
 |---|---|---|
 | **Concurrency** | How many virtual users send requests at the same moment. Each user sends a request, waits for the answer, then immediately sends the next. *(hidden in Step test, where the levels set it)* | `50` |
 | **Rate limit** (req/s) | Caps the **total** requests per second. `0` = as fast as possible. | `500` = "hold a steady 500/s" |
 | **Ramp-up** (seconds) | Users start gradually instead of all at once. In a Step test it is *per step*; `0` = automatic. | `3` |
+| **p95 latency under** (ms) | Your pass/fail goal (SLO) for latency. | `500` |
+| **Errors under** (%) | Your pass/fail goal for failures. | `1` |
+
+Under **Advanced**:
+
+| Field | Meaning | Example |
+|---|---|---|
 | **Timeout** (ms) | A request with no answer by then counts as failed (`TIMEOUT`). | `10000` |
 | **Threads** | Worker threads that generate load. `0` = auto (up to 4, depending on your CPU). Raise it if the tester itself becomes the bottleneck. | `0` |
 | **Keep-alive** | **On**: reuse connections like a browser. **Off**: open a new TCP connection per request (tests connection handling; can exhaust ports at high volume). | On |
-| **SLO: p95 under** (ms) | Your pass/fail rule for latency. | `500` |
-| **SLO: errors under** (%) | Your pass/fail rule for failures. | `1` |
 
 **Rate limit vs concurrency:**
 - Rate limit `0` + many users = *"push as hard as you can and find my ceiling."*
@@ -360,7 +383,7 @@ LoadLab can generate a lot of traffic, so it is locked down by default:
 
 ```
 app/                  Next.js app router: page, layout, global CSS
-  api/                state · probe · scan · runs (+ [id], stop, events)
+  api/                state · probe · discover · hosts · scan · runs (+ [id], stop, events)
 components/           Dashboard, ConfigPanel, Results, History, Charts (canvas), format helpers
 engine/
   engine.js           config validation, phases, aggregation, timeline, snapshots
@@ -383,6 +406,8 @@ Everything the UI does goes through a small JSON API (handy for scripts and CI).
 |---|---|
 | `GET /api/state` | Active run id, history list, system info, sibling project folders |
 | `GET /api/probe?url=…` | Send one test request and report status / time |
+| `GET /api/discover` | List HTTP servers running on common local ports |
+| `POST /api/hosts` `{ "host": "example.com", "confirm": true }` / `DELETE /api/hosts?host=…` | Approve / remove an external site you own |
 | `POST /api/scan` `{ "dir": "/path/to/project" }` | Detect routes in a project |
 | `POST /api/runs` | Start a run → `201 { "id": "…" }` (`409` if one is already running) |
 | `GET /api/runs/:id` | Live snapshot, or the final result with analysis |
