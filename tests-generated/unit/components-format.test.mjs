@@ -8,6 +8,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
+// Pin the timezone before any Date formatting runs.
+// `when()` calls toLocaleString() with the *system* zone, so the characterization
+// values captured below ("Jan 1, 05:30 AM") are only true in IST (+05:30). Without
+// this line the suite passes in India and fails on every UTC CI runner.
+process.env.TZ = "Asia/Kolkata";
+
 const mod = await import(new URL("../../components/format.js", import.meta.url));
 const pick = (name) => mod[name] ?? mod.default?.[name] ?? (name === "default" ? mod.default : undefined);
 async function run(fn, ...args) { try { return { ok: true, value: await fn(...args) }; } catch (error) { return { ok: false, error }; } }
@@ -715,7 +721,7 @@ describe("when()  ·  components/format.js:11", () => {
   const fn = pick("when");
   it("is exported", () => { assert.ok(typeof fn === "function", "when is not exported from components/format.js"); });
   it("typical input", async () => {
-    const r = await run(fn, "a");
+    const r = await run(fn, "a", "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Invalid Date");
   });
@@ -725,52 +731,52 @@ describe("when()  ·  components/format.js:11", () => {
     assert.deepStrictEqual(r.value, "Invalid Date");
   });
   it("t = undefined", async () => {
-    const r = await run(fn, undefined);
+    const r = await run(fn, undefined, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Invalid Date");
   });
   it("t = null", async () => {
-    const r = await run(fn, null);
+    const r = await run(fn, null, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Jan 1, 05:30 AM");
   });
   it("t = 0", async () => {
-    const r = await run(fn, 0);
+    const r = await run(fn, 0, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Jan 1, 05:30 AM");
   });
   it("t = 1", async () => {
-    const r = await run(fn, 1);
+    const r = await run(fn, 1, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Jan 1, 05:30 AM");
   });
   it("t = -1", async () => {
-    const r = await run(fn, -1);
+    const r = await run(fn, -1, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Jan 1, 05:29 AM");
   });
   it("t = \"\"", async () => {
-    const r = await run(fn, "");
+    const r = await run(fn, "", "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Invalid Date");
   });
   it("t = true", async () => {
-    const r = await run(fn, true);
+    const r = await run(fn, true, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Jan 1, 05:30 AM");
   });
   it("t = false", async () => {
-    const r = await run(fn, false);
+    const r = await run(fn, false, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Jan 1, 05:30 AM");
   });
   it("t = {}", async () => {
-    const r = await run(fn, {});
+    const r = await run(fn, {}, "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Invalid Date");
   });
   it("t = []", async () => {
-    const r = await run(fn, []);
+    const r = await run(fn, [], "en-US", { timeZone: "Asia/Kolkata" });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.value, "Invalid Date");
   });

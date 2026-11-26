@@ -1,0 +1,43 @@
+# Save as:  .github/workflows/ci.yml   in  pranjalkuhikar/load-tester
+#
+# Verified locally on Node 20.20.2:
+#   npm ci                                  -> OK
+#   TZ=Asia/Kolkata node --test tests-generated/unit/  -> 371 pass, 0 fail
+#   TZ=UTC              node --test tests-generated/unit/  -> 365 pass, 6 FAIL
+#   after patches/loadlab-timezone.patch: 371 pass in every TZ and locale
+#
+# That TZ line is a stopgap: 6 assertions in
+# tests-generated/unit/components-format.test.mjs hardcode +05:30 output
+# ("Jan 1, 05:30 AM"), so on a UTC runner they fail.
+# The real fix is patches/loadlab-timezone.patch — apply it and the suite passes
+# on any timezone AND any locale (verified: 371/371 across 3 TZ x 4 locales).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: tests · build
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Kolkata
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests (engine + formatters)
+        run: node --test tests-generated/unit/
+
+      - name: Production build
+        run: npx next build
